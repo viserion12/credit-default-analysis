@@ -1,18 +1,11 @@
-/*
-    Credit Card Default Analysis
-    PostgreSQL
-
-    Source table: uci_credit_card
-    Clean view:   credit_clients_clean
-    Feature view: credit_features
-*/
+-- Анализ дефолтов по кредитным картам в PostgreSQL.
+-- Исходная таблица: uci_credit_card.
+-- Итоговая витрина для Python: credit_features.
 
 
-/* ================================================================
-   1. INITIAL DATA QUALITY CHECKS
-   ================================================================ */
+-- 1. Проверка данных
 
--- Row count, unique clients and missing key fields.
+-- Проверяем количество строк, клиентов и пропуски в основных полях.
 SELECT
     COUNT(*) AS rows_count,
     COUNT(DISTINCT id) AS unique_clients,
@@ -23,7 +16,7 @@ SELECT
 FROM uci_credit_card;
 
 
--- Duplicate client identifiers.
+-- Проверяем дубли по id клиента.
 SELECT
     id,
     COUNT(*) AS rows_per_id
@@ -33,7 +26,7 @@ HAVING COUNT(*) > 1
 ORDER BY rows_per_id DESC, id;
 
 
--- Target distribution.
+-- Смотрим распределение дефолтов.
 SELECT
     "default.payment.next.month" AS default_next_month,
     COUNT(*) AS clients_count,
@@ -46,7 +39,7 @@ GROUP BY "default.payment.next.month"
 ORDER BY default_next_month;
 
 
--- Raw categorical values.
+-- Смотрим значения категориальных полей.
 SELECT sex, COUNT(*) AS clients_count
 FROM uci_credit_card
 GROUP BY sex
@@ -63,7 +56,7 @@ GROUP BY marriage
 ORDER BY marriage;
 
 
--- Repayment-status distribution across all six observed months.
+-- Собираем статусы просрочки за все шесть месяцев.
 SELECT
     repayment_status,
     COUNT(*) AS observations
@@ -81,7 +74,7 @@ GROUP BY repayment_status
 ORDER BY repayment_status;
 
 
--- Numeric ranges and potentially unusual negative values.
+-- Проверяем диапазоны числовых полей и отрицательные значения.
 SELECT
     MIN(age) AS min_age,
     MAX(age) AS max_age,
@@ -124,9 +117,7 @@ SELECT
 FROM uci_credit_card;
 
 
-/* ================================================================
-   2. CLEAN ANALYTICAL VIEW
-   ================================================================ */
+-- 2. Подготовка данных
 
 CREATE OR REPLACE VIEW credit_clients_clean AS
 SELECT
@@ -158,18 +149,16 @@ SELECT
 FROM uci_credit_card AS c;
 
 
--- The clean view must preserve the source grain: one row per client.
+-- Проверяем, что после очистки осталась одна строка на клиента.
 SELECT
     COUNT(*) AS rows_count,
     COUNT(DISTINCT id) AS unique_clients
 FROM credit_clients_clean;
 
 
-/* ================================================================
-   3. EXPLORATORY SQL ANALYSIS
-   ================================================================ */
+-- 3. Смотрим связи с дефолтом
 
--- Default rate by education.
+-- Доля дефолтов по уровню образования.
 SELECT
     education_name,
     COUNT(*) AS clients_count,
@@ -180,7 +169,7 @@ GROUP BY education_name
 ORDER BY default_rate_pct DESC;
 
 
--- Default rate by sex.
+-- Доля дефолтов по полу.
 SELECT
     sex_name,
     COUNT(*) AS clients_count,
@@ -191,7 +180,7 @@ GROUP BY sex_name
 ORDER BY default_rate_pct DESC;
 
 
--- Default rate by marital status.
+-- Доля дефолтов по семейному положению.
 SELECT
     marriage_name,
     COUNT(*) AS clients_count,
@@ -202,7 +191,7 @@ GROUP BY marriage_name
 ORDER BY default_rate_pct DESC;
 
 
--- Default rate by age group.
+-- Доля дефолтов по возрастным группам.
 WITH age_segmented AS (
     SELECT
         CASE
@@ -225,7 +214,7 @@ GROUP BY age_group
 ORDER BY default_rate_pct DESC;
 
 
--- Default rate by maximum repayment-delay status.
+-- Доля дефолтов по максимальной длительности просрочки.
 SELECT
     GREATEST(
         pay_0, pay_2, pay_3,
@@ -239,7 +228,7 @@ GROUP BY max_delay_status
 ORDER BY max_delay_status;
 
 
--- Maximum delay combined into stable business groups.
+-- Объединяем просрочки в понятные группы.
 WITH delay_metrics AS (
     SELECT
         GREATEST(
@@ -270,7 +259,7 @@ GROUP BY delay_group
 ORDER BY default_rate_pct;
 
 
--- Default rate by number of months in which a delay was observed.
+-- Доля дефолтов по количеству месяцев с просрочкой.
 SELECT
     (pay_0 > 0)::int +
     (pay_2 > 0)::int +
@@ -286,7 +275,7 @@ GROUP BY delayed_months_count
 ORDER BY delayed_months_count;
 
 
--- Default rate by current credit-limit utilization.
+-- Доля дефолтов по использованию кредитного лимита.
 WITH utilization AS (
     SELECT
         id,
@@ -338,9 +327,7 @@ GROUP BY utilization_group, group_order
 ORDER BY group_order;
 
 
-/* ================================================================
-   4. MODEL-READY FEATURE VIEW
-   ================================================================ */
+-- 4. Собираем итоговую витрину
 
 CREATE OR REPLACE VIEW credit_features AS
 WITH metrics AS (
@@ -468,8 +455,8 @@ SELECT
     ROUND(bill_change_amt, 2) AS bill_change_amt,
 
     /*
-        Approximate repayment intensity, not an exact share of debt repaid.
-        Non-positive average bills are returned as NULL.
+        Приблизительное отношение платежей к сумме счетов.
+        Если средний счет равен нулю или меньше нуля, возвращаем NULL.
     */
     CASE
         WHEN avg_bill_amt > 0 THEN
@@ -482,9 +469,7 @@ SELECT
 FROM metrics;
 
 
-/* ================================================================
-   5. FINAL FEATURE-VIEW VALIDATION
-   ================================================================ */
+-- 5. Проверяем итоговую витрину
 
 SELECT
     COUNT(*) AS rows_count,
